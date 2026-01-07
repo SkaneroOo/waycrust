@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tracing::debug;
-use ::winit::platform::pump_events::PumpStatus;
+use ::winit::{event_loop::ActiveEventLoop, platform::pump_events::PumpStatus};
 use smithay::{
     backend::{
         input::{InputEvent, KeyboardKeyEvent, Keycode},
@@ -13,9 +13,9 @@ use smithay::{
         winit::{self, WinitEvent},
     },
     delegate_compositor, delegate_data_device, delegate_seat, delegate_shm, delegate_xdg_shell,
-    input::{Seat, SeatHandler, SeatState, keyboard::FilterResult},
+    input::{Seat, SeatHandler, SeatState, dnd::Source, keyboard::FilterResult},
     reexports::wayland_server::{Display, protocol::wl_seat},
-    utils::{Rectangle, Serial, Transform},
+    utils::{Rectangle, Serial, Size, Transform},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -28,10 +28,7 @@ use smithay::{
         shm::{ShmHandler, ShmState},
     },
 };
-use wayland_protocols::xdg::{
-    shell::server::xdg_toplevel,
-    decoration::zv1::server::zxdg_toplevel_decoration_v1
-};
+use wayland_protocols::xdg::shell::server::xdg_toplevel;
 use wayland_server::{
     backend::{ClientData, ClientId, DisconnectReason},
     protocol::{
@@ -53,8 +50,11 @@ impl XdgShellHandler for App {
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         surface.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Activated);
+            state.states.set(xdg_toplevel::State::Fullscreen);
+            state.size = self.size.map(|s| s.to_logical(1));
+            // state.size = 
         });
+        // surface.xdg_toplevel().set_fullscreen(true);
         surface.send_configure();
     }
 
@@ -124,6 +124,7 @@ struct App {
     data_device_state: DataDeviceState,
 
     seat: Seat<Self>,
+    size: Option<Size<i32, smithay::utils::Physical>>
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -153,6 +154,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
             seat_state,
             data_device_state: DataDeviceState::new::<App>(&dh),
             seat,
+            size: None
         }
     };
 
@@ -196,14 +198,24 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                                 key_symbol = ::xkbcommon::xkb::keysym_get_name(key_symbol),
                                 "keysym"
                             );
-                            match (modifiers.ctrl, modifiers.alt, modifiers.shift, modifiers.logo, key_symbol) {
-                                (false, false, false, true, Keysym::Return) => {
-                                    std::process::Command::new("wofi").args(["-S", "drun"]).spawn().ok();
-                                    FilterResult::Intercept(())
+                            if key_state == smithay::backend::input::KeyState::Pressed {
+                                match (modifiers.ctrl, modifiers.alt, modifiers.shift, modifiers.logo, key_symbol) {
+                                    (true, false, true, true, Keysym::Return) => {
+                                        // std::process::Command::new("wofi").args(["-S", "drun"]).spawn().ok();
+                                        std::process::Command::new("weston-terminal").spawn().ok();
+                                        FilterResult::Intercept(())
+                                    }
+                                    (false, false, true, true, Keysym::F) => {
+                                        // std::process::Command::new("wofi").args(["-S", "drun"]).spawn().ok();
+                                        std::process::Command::new("firefox").spawn().ok();
+                                        FilterResult::Intercept(())
+                                    }
+                                    _ => {
+                                        FilterResult::Forward
+                                    }
                                 }
-                                _ => {
-                                    FilterResult::Forward
-                                }
+                            } else {
+                                FilterResult::Forward
                             }
                         },
                     );
@@ -225,6 +237,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let size = backend.window_size();
+        state.size = Some(size);
         let damage = Rectangle::from_size(size);
         {
             let (renderer, mut framebuffer) = backend.bind().unwrap();
@@ -236,7 +249,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                     render_elements_from_surface_tree(
                         renderer,
                         surface.wl_surface(),
-                        (100, 0),
+                        (0, 0),
                         1.0,
                         1.0,
                         Kind::Unspecified,

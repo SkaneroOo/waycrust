@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use tracing::debug;
 use ::winit::{event_loop::ActiveEventLoop, platform::pump_events::PumpStatus};
 use smithay::{
     backend::{
-        input::{InputEvent, KeyboardKeyEvent, Keycode},
+        input::{AbsolutePositionEvent, InputEvent, KeyboardKeyEvent, Keycode, PointerButtonEvent},
         renderer::{
             Color32F, Frame, Renderer, element::{
                 Kind, surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree}
@@ -13,9 +13,9 @@ use smithay::{
         winit::{self, WinitEvent},
     },
     delegate_compositor, delegate_data_device, delegate_seat, delegate_shm, delegate_xdg_shell,
-    input::{Seat, SeatHandler, SeatState, dnd::Source, keyboard::FilterResult},
+    input::{Seat, SeatHandler, SeatState, dnd::{DndFocus, Source}, keyboard::FilterResult, pointer::{ButtonEvent, MotionEvent, PointerTarget}},
     reexports::wayland_server::{Display, protocol::wl_seat},
-    utils::{Rectangle, Serial, Size, Transform},
+    utils::{Rectangle, SERIAL_COUNTER, Serial, Size, Transform},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -30,17 +30,64 @@ use smithay::{
 };
 use wayland_protocols::xdg::shell::server::xdg_toplevel;
 use wayland_server::{
-    backend::{ClientData, ClientId, DisconnectReason},
-    protocol::{
+    Client, ListeningSocket, Resource, backend::{ClientData, ClientId, DisconnectReason}, protocol::{
         wl_buffer,
         wl_surface::{self, WlSurface},
-    },
-    Client, ListeningSocket,
+    }
 };
 use xkbcommon::xkb::Keysym;
 
 impl BufferHandler for App {
     fn buffer_destroyed(&mut self, _buffer: &wl_buffer::WlBuffer) {}
+}
+
+impl App {
+    fn focus_toplevel(&mut self, surface: Option<ToplevelSurface>) {
+        let kbd = match self.seat.get_keyboard() {
+            Some(k) => k,
+            None => return
+        };
+
+        if let Some(ref s) = surface {
+            kbd.set_focus(self, Some(s.wl_surface().clone()), SERIAL_COUNTER.next_serial());
+
+            s.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Fullscreen);
+                state.size = self.size.map(|s| s.to_logical(1));
+            });
+            s.send_configure();
+        } else {
+            kbd.set_focus(self, None, SERIAL_COUNTER.next_serial());
+        }
+
+        self.toplevels.focused = surface;
+    }
+
+    fn next_toplevel(&mut self) {
+        if self.toplevels.toplevels.len() < 2 {
+            return
+        }
+
+        if let Some(front) = self.toplevels.toplevels.pop_front() {
+            self.toplevels.toplevels.push_back(front);
+        }
+
+        let next = self.toplevels.toplevels.front().cloned();
+        self.focus_toplevel(next);
+    }
+
+    fn previous_toplevel(&mut self) {
+        if self.toplevels.toplevels.len() < 2 {
+            return
+        }
+
+        if let Some(back) = self.toplevels.toplevels.pop_back() {
+            self.toplevels.toplevels.push_front(back);
+        }
+
+        let prev = self.toplevels.toplevels.back().cloned();
+        self.focus_toplevel(prev);
+    }
 }
 
 impl XdgShellHandler for App {
@@ -52,10 +99,22 @@ impl XdgShellHandler for App {
         surface.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Fullscreen);
             state.size = self.size.map(|s| s.to_logical(1));
-            // state.size = 
         });
-        // surface.xdg_toplevel().set_fullscreen(true);
+        
         surface.send_configure();
+
+        self.toplevels.toplevels.push_front(surface.clone());
+
+        self.focus_toplevel(Some(surface));
+    }
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.toplevels.toplevels.retain(|s| s != &surface);
+
+        if self.toplevels.focused.as_ref() == Some(&surface) {
+            let next = self.toplevels.toplevels.front().cloned();
+            self.focus_toplevel(next);
+        }
     }
 
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {
@@ -116,12 +175,18 @@ impl SeatHandler for App {
     fn cursor_image(&mut self, _seat: &Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {}
 }
 
+struct TopLevelWindows {
+    toplevels: VecDeque<ToplevelSurface>,
+    focused: Option<ToplevelSurface>
+}
+
 struct App {
     compositor_state: CompositorState,
     xdg_shell_state: XdgShellState,
     shm_state: ShmState,
     seat_state: SeatState<Self>,
     data_device_state: DataDeviceState,
+    toplevels: TopLevelWindows,
 
     seat: Seat<Self>,
     size: Option<Size<i32, smithay::utils::Physical>>
@@ -153,6 +218,8 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
             shm_state,
             seat_state,
             data_device_state: DataDeviceState::new::<App>(&dh),
+            toplevels: TopLevelWindows { toplevels: VecDeque::new(), focused: None },
+            // cursor_location: (0_u32, 0_u32),
             seat,
             size: None
         }
@@ -167,6 +234,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     let start_time = std::time::Instant::now();
     
     let keyboard = state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+    let _pointer = state.seat.add_pointer();
     
     unsafe {
         std::env::set_var("WAYLAND_DISPLAY", "wayland-5");
@@ -184,13 +252,14 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
             WinitEvent::Input(event) => match event {
                 InputEvent::Keyboard { event } => {
                     let key_state = event.state();
+                    let surfaces = state.xdg_shell_state.toplevel_surfaces().to_owned();
                     keyboard.input::<(), _>(
                         &mut state,
                         event.key_code(),
                         key_state,
-                        0.into(),
+                        SERIAL_COUNTER.next_serial(),
                         0,
-                        |_, modifiers, handle| {
+                        |state, modifiers, handle| {
                             let key_symbol = handle.modified_sym();
                             debug!(
                                 ?key_state,
@@ -200,14 +269,41 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                             );
                             if key_state == smithay::backend::input::KeyState::Pressed {
                                 match (modifiers.ctrl, modifiers.alt, modifiers.shift, modifiers.logo, key_symbol) {
+                                    (true, true, false, false, Keysym::Tab) => {
+                                        state.next_toplevel();
+
+                                        FilterResult::Intercept(())
+                                    }
+                                    (true, true, true, false, Keysym::Tab) => {
+                                        state.previous_toplevel();
+
+                                        FilterResult::Intercept(())
+                                    }
                                     (true, false, true, true, Keysym::Return) => {
                                         // std::process::Command::new("wofi").args(["-S", "drun"]).spawn().ok();
                                         std::process::Command::new("weston-terminal").spawn().ok();
+
                                         FilterResult::Intercept(())
                                     }
                                     (false, false, true, true, Keysym::F) => {
                                         // std::process::Command::new("wofi").args(["-S", "drun"]).spawn().ok();
                                         std::process::Command::new("firefox").spawn().ok();
+                                        FilterResult::Intercept(())
+                                    }
+                                    (false, false, true, true, Keysym::Q) => {
+                                        let focused = match keyboard.current_focus() {
+                                            Some(f) => f,
+                                            None => {
+                                                return FilterResult::Intercept(())
+                                            }
+                                        };
+                                        let toplevel = match surfaces.iter().find(|t| t.wl_surface() == &focused) {
+                                            Some(t) => t,
+                                            None => {
+                                                return FilterResult::Intercept(())
+                                            }
+                                        };
+                                        toplevel.send_close();
                                         FilterResult::Intercept(())
                                     }
                                     _ => {
@@ -220,14 +316,55 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                         },
                     );
                 }
-                InputEvent::PointerMotionAbsolute { .. } => {
-                    if let Some(surface) = state.xdg_shell_state.toplevel_surfaces().iter().next().cloned() {
-                        let surface = surface.wl_surface().clone();
-                        keyboard.set_focus(&mut state, Some(surface), 0.into());
+                InputEvent::PointerMotionAbsolute { event } => {
+                    let pointer = match state.seat.get_pointer() {
+                        Some(p) => p,
+                        None => return
                     };
+                    let point = event.position();
+
+                    let location = (point.x, point.y).into();
+
+                    let event = MotionEvent {
+                        location,
+                        serial: SERIAL_COUNTER.next_serial(),
+                        time: 0
+                    };
+
+                    let focus = match state.toplevels.focused {
+                        Some(ref f) => Some((f.wl_surface().clone(), (0.0, 0.0).into())),
+                        None => None
+                    };
+
+                    pointer.motion(
+                        &mut state,
+                        focus,
+                        &event,
+                    );
+                    pointer.frame(&mut state);
+                }
+                InputEvent::PointerButton { event } => {
+                    let pointer = match state.seat.get_pointer() {
+                        Some(p) => p,
+                        None => return
+                    };
+                    let event = ButtonEvent {
+                        serial: 0.into(),
+                        time: 0,
+                        button: event.button_code(),
+                        state: event.state()
+                    };
+                    pointer.button(&mut state, &event);
+                    // if let Some(focused) = keyboard.current_focus() {
+                    //     focused.button(&state.seat.clone(), &mut state, &event);
+                    // }
+                    pointer.frame(&mut state);
                 }
                 _ => {}
             },
+            WinitEvent::CloseRequested => {
+
+            }
             _ => (),
         });
 
@@ -241,27 +378,49 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
         let damage = Rectangle::from_size(size);
         {
             let (renderer, mut framebuffer) = backend.bind().unwrap();
-            let elements = state
-                .xdg_shell_state
-                .toplevel_surfaces()
-                .iter()
-                .flat_map(|surface| {
-                    render_elements_from_surface_tree(
-                        renderer,
-                        surface.wl_surface(),
-                        (0, 0),
-                        1.0,
-                        1.0,
-                        Kind::Unspecified,
-                    )
-                })
-                .collect::<Vec<WaylandSurfaceRenderElement<GlesRenderer>>>();
+            // let elements = state
+            //     .xdg_shell_state
+            //     .toplevel_surfaces()
+            //     .iter()
+            //     .flat_map(|surface| {
+            //         render_elements_from_surface_tree(
+            //             renderer,
+            //             surface.wl_surface(),
+            //             (0, 0),
+            //             1.0,
+            //             1.0,
+            //             Kind::Unspecified,
+            //         )
+            //     })
+            //     .collect::<Vec<WaylandSurfaceRenderElement<GlesRenderer>>>();
+            // let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = match state.window_index {
+            //     Some(n) => render_elements_from_surface_tree(
+            //         renderer,
+            //         state.xdg_shell_state.toplevel_surfaces().iter().nth(n).unwrap().wl_surface(),
+            //         (0, 0),
+            //         1.0,
+            //         1.0,
+            //         Kind::Unspecified
+            //     ),
+            //     None => vec![]
+            // };
+            let to_render: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = match state.toplevels.focused {
+                Some(ref top) => render_elements_from_surface_tree(
+                    renderer,
+                    top.wl_surface(),
+                    (0, 0),
+                    1.0,
+                    1.0,
+                    Kind::Unspecified
+                ),
+                None => vec![]
+            };
 
             let mut frame = renderer
                 .render(&mut framebuffer, size, Transform::Flipped180)
                 .unwrap();
-            frame.clear(Color32F::new(0.1, 0.0, 0.0, 1.0), &[damage]).unwrap();
-            draw_render_elements(&mut frame, 1.0, &elements, &[damage]).unwrap();
+            frame.clear(Color32F::new(0.1, 0.1, 0.1, 1.0), &[damage]).unwrap();
+            draw_render_elements(&mut frame, 1.0, &to_render, &[damage]).unwrap();
             // We rely on the nested compositor to do the sync for us
             let _ = frame.finish().unwrap();
 

@@ -1,0 +1,39 @@
+(
+    keybinds: [
+        (
+            shortcut: (
+                key: "return",
+                modifiers: [Ctrl, Shift, Logo]
+            ),
+            action: Exec("weston-terminal")
+        ),
+        (
+            shortcut: (
+                key: 'F',
+                modifiers: [Logo, Shift]
+            ),
+            action: Exec("firefox")
+        ),
+        (
+            shortcut: (
+                key: "Q",
+                modifiers: [Logo, Shift]
+            ),
+            action: Kill
+        ),
+        (
+            shortcut: (
+                key: "tab",
+                modifiers: [Ctrl, Logo]
+            ),
+            action: CyclePrev
+        ),
+        (
+            shortcut: (
+                key: "tab",
+                modifiers: [Ctrl]
+            ),
+            action: CycleNext
+        )
+    ]
+)

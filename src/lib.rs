@@ -1,7 +1,6 @@
 pub mod compositor;
 pub mod comp_utils;
 pub mod xdg;
-pub mod winit;
 pub mod handlers;
 pub mod config;
 pub mod render;

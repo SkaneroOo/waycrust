@@ -17,9 +17,9 @@ pub struct Waycrust {
     pub shm_state: ShmState,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
+    pub seat: Seat<Self>,
     pub toplevels: TopLevelWindows,
 
-    pub seat: Seat<Self>,
     pub size: Option<Size<i32, smithay::utils::Logical>>,
     pub config: Config
 }

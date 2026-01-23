@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use smithay::input::keyboard::XkbConfig;
 use xkbcommon::xkb::Keysym;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,8 +46,30 @@ pub struct Keybind {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Config {
     pub keybinds: Vec<Keybind>,
-
+    pub keyboard: KeyboardConfig
 }
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct KeyboardConfig {
+    pub rules: String,
+    pub model: String,
+    pub layout: String,
+    pub variant: String,
+    pub options: Option<String>
+}
+
+impl<'a> From<&'a KeyboardConfig> for XkbConfig<'a> {
+    fn from(cfg: &'a KeyboardConfig) -> XkbConfig<'a> {
+        XkbConfig {
+            rules: &cfg.rules,
+            model: &cfg.model,
+            layout: &cfg.layout,
+            variant: &cfg.variant,
+            options: cfg.options.clone(),
+        }
+    }
+}
+
 
 impl KeybindShortcut {
     pub fn new_verbose(key: impl Into<Keysym>, alt: bool, ctrl: bool, shift: bool, logo: bool) -> Self {

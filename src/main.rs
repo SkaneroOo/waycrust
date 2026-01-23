@@ -43,7 +43,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     
     let start_time = std::time::Instant::now();
     
-    let _keyboard = state.seat.add_keyboard(Default::default(), 200, 200);
+    let _keyboard = state.seat.add_keyboard((&state.config.keyboard).into(), 200, 200);
     let _pointer = state.seat.add_pointer();
     
     unsafe {

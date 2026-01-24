@@ -17,9 +17,16 @@ pub fn handle_keyboard_event(state: &mut Waycrust, event: WinitKeyboardInputEven
         None => return
     };
     let key_state = event.state();
+    let mut key_code = event.key_code();
+    for remap in &state.config.remaps {
+        if remap.from.raw() == key_code.raw() {
+            key_code = remap.into.raw().into();
+            break
+        }
+    }
     keyboard.input::<(), _>(
         state,
-        event.key_code(),
+        key_code,
         key_state,
         SERIAL_COUNTER.next_serial(),
         0,

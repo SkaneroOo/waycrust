@@ -36,9 +36,15 @@ pub fn render_screen(
     
     let damage = Rectangle::from_size(size);
 
-    let mut frame = renderer
-        .render(&mut framebuffer, size, Transform::Flipped180)
-        .unwrap();
+    let mut frame = if state.flipped {
+        renderer
+            .render(&mut framebuffer, size, Transform::_180)
+            .unwrap()
+    } else {
+        renderer
+            .render(&mut framebuffer, size, Transform::Flipped180)
+            .unwrap()
+    };
     frame.clear(Color32F::new(0.1, 0.1, 0.1, 1.0), &[damage]).unwrap();
     draw_render_elements(&mut frame, 1.0, &to_render, &[damage]).unwrap();
     // We rely on the nested compositor to do the sync for us

@@ -1,13 +1,12 @@
 use waycrust::{
     compositor::Waycrust, 
     handlers::{
-        input::{
+        actions::handle_actions, input::{
             keyboard::handle_keyboard_event, 
             pointer::{handle_pointer_button, handle_pointer_movement}
-        }, 
-        window::window_resize_handler
+        }, window::window_resize_handler
     }, 
-    render::render_screen
+    render::render_screen, socket::ActionSocket
 };
 
 use ::winit::platform::pump_events::PumpStatus;
@@ -49,6 +48,8 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         std::env::set_var("WAYLAND_DISPLAY", "wayland-5");
     }
+
+    let action_socket = ActionSocket::new("/tmp/waycrust.sock")?;
     
     loop {
         let status = winit.dispatch_new_events(|event| match event {
@@ -72,6 +73,10 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
             }
             _ => (),
         });
+
+        for action in action_socket.pool() {
+            handle_actions(&mut state, action);
+        }
 
         match status {
             PumpStatus::Continue => (),

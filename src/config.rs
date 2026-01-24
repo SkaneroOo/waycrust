@@ -7,6 +7,7 @@ pub struct KeybindShortcut {
     #[serde(with = "keysym_serde")]
     pub key: Keysym,
     #[serde(deserialize_with = "modifier_mask_serde::deserialize")]
+    #[serde(default)]
     pub modifiers: u8
 }
 
@@ -33,7 +34,7 @@ pub enum KeybindAction {
     Kill,
     Exec(String),
     CycleNext,
-    CyclePrev
+    CyclePrev,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,8 +46,20 @@ pub struct Keybind {
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Config {
+    #[serde(default)]
     pub keybinds: Vec<Keybind>,
-    pub keyboard: KeyboardConfig
+    #[serde(default)]
+    pub keyboard: KeyboardConfig,
+    #[serde(default)]
+    pub remaps: Vec<KeyboardRemap>
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KeyboardRemap {
+    #[serde(with = "keysym_serde")]
+    pub from: Keysym,
+    #[serde(with = "keysym_serde")]
+    pub into: Keysym
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

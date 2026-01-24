@@ -75,7 +75,8 @@ impl Waycrust {
             toplevels: TopLevelWindows { toplevels: VecDeque::new(), focused: None },
             seat,
             size: None,
-            config: load_config()
+            config: load_config(),
+            flipped: false
         }, display))
     }
 }

@@ -4,6 +4,7 @@ pub mod xdg;
 pub mod handlers;
 pub mod config;
 pub mod render;
+pub mod socket;
 
 use compositor::Waycrust;
 use smithay::{delegate_xdg_shell, delegate_compositor, delegate_shm, delegate_seat, delegate_data_device};

@@ -21,7 +21,8 @@ pub struct Waycrust {
     pub toplevels: TopLevelWindows,
 
     pub size: Option<Size<i32, smithay::utils::Logical>>,
-    pub config: Config
+    pub config: Config,
+    pub flipped: bool
 }
 
 pub struct TopLevelWindows {
